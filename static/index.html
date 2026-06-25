@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG Agent 知识库问答系统</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        .admin-panel {
+            position: fixed;
+            right: 0;
+            top: 0;
+            width: 320px;
+            height: 100vh;
+            background: white;
+            box-shadow: -4px 0 20px rgba(0,0,0,0.1);
+            z-index: 100;
+            display: none;
+            flex-direction: column;
+        }
+        .panel-header {
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .panel-header h3 {
+            font-size: 16px;
+            margin: 0;
+        }
+        .close-btn {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .panel-content {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        .upload-section {
+            margin-bottom: 20px;
+        }
+        .upload-btn {
+            width: 100%;
+            padding: 12px;
+            background: #f0f0f0;
+            border: 2px dashed #ccc;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+            color: #666;
+        }
+        .upload-btn:hover {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.1);
+            color: #667eea;
+        }
+        .document-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .document-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .document-name {
+            flex: 1;
+            font-size: 14px;
+            color: #333;
+            word-break: break-all;
+        }
+        .delete-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        .delete-btn:hover {
+            background: #c82333;
+        }
+        .admin-toggle {
+            position: fixed;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #667eea;
+            color: white;
+            padding: 10px 5px;
+            border-radius: 8px 0 0 8px;
+            cursor: pointer;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            font-size: 14px;
+            z-index: 99;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+        }
+        .ad {
+            position: fixed;
+            right: 0;
+            top: 40%;
+            transform: translateY(-50%);
+            background: #667eea;
+            color: white;
+            padding: 10px 5px;
+            border-radius: 8px 0 0 8px;
+            cursor: pointer;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            font-size: 14px;
+            z-index: 99;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+        }
+
+        .admin-toggle:hover {
+            background: #764ba2;
+        }
+        .logout-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(255,255,255,0.9);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #666;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .logout-btn:hover {
+            background: #f0f0f0;
+        }
+        .file-input {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <button class="logout-btn" id="logout-btn">退出登录</button>
+     
+    <div class="container">
+        <div class="header">
+            <h1> RAG Agent 知识库问答系统</h1>
+            <p>基于公司制度文档的智能问答助手</p>
+        </div>
+
+        <div class="chat-container">
+            <div class="chat-messages" id="chat-messages">
+                <div class="welcome-message">
+                    <h3>您好！我是您的智能助手</h3>
+                    <p>我可以帮助您查询公司制度相关的问题，如年假政策、加班调休、出差报销等。</p>
+                    <p style="margin-top: 10px; color: #666; font-size: 13px;">输入问题开始问答，或输入"清空"清除对话历史</p>
+                </div>
+            </div>
+
+            <div class="input-container">
+                <div class="input-wrapper">
+                    <input type="text" id="question-input" placeholder="输入您的问题..." autocomplete="off">
+                </div>
+                <button class="clear-btn" id="clear-btn">清空</button>
+                <button class="send-btn" id="send-btn">
+                    <span>➤</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="admin-panel" id="admin-panel">
+        <div class="panel-header">
+            <h3>📁 文档管理</h3>
+            <button class="close-btn" id="close-admin-panel">×</button>
+        </div>
+        <div class="panel-content">
+            <div class="upload-section">
+                <input type="file" id="file-input" class="file-input" accept=".pdf,.docx,.doc">
+                <button class="upload-btn" id="upload-btn">📤 上传文档</button>
+            </div>
+            <div class="document-list" id="document-list">
+                <p style="text-align: center; color: #999; padding: 20px;">点击上传添加文档</p>
+            </div>
+        </div>
+    </div>
+
+ <div class="admin-panel" id="adp">
+        <div class="panel-header">
+            <h3>检索优化</h3>
+            <button class="close-btn" id="cl">×</button>
+        </div>
+        <div class="panel-content">
+            <div class="upload-section">
+                <input type="file" id="ipt" class="file-input" accept=".txt">
+                <button class="upload-btn" id="upl-btn">上传术语文档</button>
+            </div>
+            <div class="document-list" id="doc-list">
+                <p style="text-align: center; color: #999; padding: 20px;">点击上传添加文档</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const chatMessages = document.getElementById('chat-messages');
+        const questionInput = document.getElementById('question-input');
+        const sendBtn = document.getElementById('send-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        const logoutBtn = document.getElementById('logout-btn');
+        const adminPanel = document.getElementById('admin-panel');
+        const adp = document.getElementById('adp');
+        const closeAdminPanel = document.getElementById('close-admin-panel');
+        const cl = document.getElementById('cl');
+
+        const uploadBtn = document.getElementById('upload-btn');
+        const fileInput = document.getElementById('file-input');
+        const documentList = document.getElementById('document-list');
+        const docList = document.getElementById('doc-list');
+        const ipt = document.getElementById('ipt');
+        const uplBtn = document.getElementById('upl-btn');
+        let currentUser = null;
+
+        async function checkLogin() {
+            const token = localStorage.getItem('token');
+            const role = localStorage.getItem('role');
+            
+            if (!token) {
+                window.location.href = '/static/login.html';
+                return false;
+            }
+            
+            try {
+                const response = await fetch('/api/me', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Token无效');
+                }
+                
+                currentUser = await response.json();
+                currentUser.role = role;
+                
+                // 确保管理员面板默认隐藏
+                adminPanel.style.display = 'none';
+                
+                if (currentUser.role === 'admin') {
+                    initAdminPanel();
+                }
+                
+                return true;
+            } catch {
+                localStorage.removeItem('token');
+                localStorage.removeItem('role');
+                window.location.href = '/static/login.html';
+                return false;
+            }
+        }
+
+        function getAuthHeaders() {
+            const token = localStorage.getItem('token');
+            return {
+                'Authorization': `Bearer ${token}`
+            };
+        }
+
+        async function sendQuestion() {
+            const question = questionInput.value.trim();
+            if (!question) return;
+
+            questionInput.value = '';
+            sendBtn.disabled = true;
+
+            if (question === '清空') {
+                await clearHistory();
+                sendBtn.disabled = false;
+                return;
+            }
+
+            addMessage('user', question);
+            addTypingIndicator();
+
+            try {
+                const response = await fetch('/ask', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...getAuthHeaders()
+                    },
+                    body: JSON.stringify({ question: question }),
+                });
+
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('role');
+                        window.location.href = '/static/login.html';
+                        return;
+                    }
+                    throw new Error('网络请求失败');
+                }
+
+                const data = await response.json();
+                removeTypingIndicator();
+                addMessage('bot', data.answer);
+            } catch (error) {
+                removeTypingIndicator();
+                addMessage('bot', `抱歉，出现错误：${error.message}`);
+            } finally {
+                sendBtn.disabled = false;
+                scrollToBottom();
+            }
+        }
+
+        async function clearHistory() {
+            try {
+                await fetch('/clear-history', { 
+                    method: 'GET',
+                    headers: getAuthHeaders()
+                });
+                chatMessages.innerHTML = `
+                    <div class="welcome-message">
+                        <h3>您好！我是您的智能助手</h3>
+                        <p>我可以帮助您查询公司制度相关的问题，如年假政策、加班调休、出差报销等。</p>
+                        <p style="margin-top: 10px; color: #666; font-size: 13px;">输入问题开始问答，或输入"清空"清除对话历史</p>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('清空历史失败:', error);
+            }
+        }
+
+        function addMessage(role, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+
+            const avatarDiv = document.createElement('div');
+            avatarDiv.className = `avatar ${role}`;
+            avatarDiv.textContent = role === 'user' ? '您' : 'AI';
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = content;
+
+            messageDiv.appendChild(avatarDiv);
+            messageDiv.appendChild(contentDiv);
+            chatMessages.appendChild(messageDiv);
+        }
+
+        function addTypingIndicator() {
+            const indicatorDiv = document.createElement('div');
+            indicatorDiv.className = 'message bot';
+            indicatorDiv.innerHTML = `
+                <div class="avatar bot">AI</div>
+                <div class="message-content">
+                    <div class="typing-indicator">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+                </div>
+            `;
+            indicatorDiv.id = 'typing-indicator';
+            chatMessages.appendChild(indicatorDiv);
+            scrollToBottom();
+        }
+
+        function removeTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) {
+                indicator.remove();
+            }
+        }
+
+        function scrollToBottom() {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function initAdminPanel() {
+            const adminToggle = document.createElement('div');
+            adminToggle.className = 'admin-toggle';
+            adminToggle.textContent = '管理文档';
+            adminToggle.onclick = () => {
+                adminPanel.style.display = 'flex';
+                loadDocuments();
+            };
+            document.body.appendChild(adminToggle);
+
+            const adm = document.createElement('div');
+            adm.className = 'ad';
+            adm.textContent = '检索优化';
+            adm.onclick = () => {
+                adp.style.display = 'flex';
+               loa();
+            };
+            document.body.appendChild(adm);
+
+
+            closeAdminPanel.onclick = () => {
+                adminPanel.style.display = 'none';
+               
+            };
+            cl.onclick = () => {
+                adp.style.display = 'none';
+            };
+            uploadBtn.onclick = () => {
+                fileInput.click();
+            };
+            uplBtn.onclick = () => {
+                ipt.click();
+            };
+             ipt.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                try {
+                    const response = await fetch('/upwendang', {
+                        method: 'POST',
+                        headers: getAuthHeaders(),
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        alert('上传成功');
+                        loa();
+                    } else {
+                        const data = await response.json();
+                        alert(data.detail || '上传失败');
+                    }
+                } catch {
+                    alert('上传失败');
+                }
+
+                e.target.value = '';
+            };
+
+            fileInput.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                try {
+                    const response = await fetch('/api/documents/upload', {
+                        method: 'POST',
+                        headers: getAuthHeaders(),
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        alert('上传成功');
+                        loadDocuments();
+                    } else {
+                        const data = await response.json();
+                        alert(data.detail || '上传失败');
+                    }
+                } catch {
+                    alert('上传失败');
+                }
+
+                e.target.value = '';
+            };
+
+          
+        }
+        async function loa(){
+          try {
+                const response = await fetch('/ap', {
+                    headers: getAuthHeaders()
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    docList.innerHTML = '';
+
+                    if (data.documents.length === 0) {
+                        docList.innerHTML = '<p style="text-align: center; color: #999; padding: 20px;">暂无文档</p>';
+                        return;
+                    }
+
+                    data.documents.forEach(doc => {
+                        const item = document.createElement('div');
+                        item.className = 'document-item';
+                        item.innerHTML = `
+                            <span class="document-name">📄 ${doc.filename}</span>
+                            <button class="delete-btn" onclick="de('${encodeURIComponent(doc.filename)}')">删除</button>
+                        `;
+                        docList.appendChild(item);
+                    });
+                }
+            } catch (error) {
+                console.error('加载文档列表失败:', error);
+            }
+
+
+
+        }
+        async function loadDocuments() {
+            try {
+                const response = await fetch('/api/documents', {
+                    headers: getAuthHeaders()
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    documentList.innerHTML = '';
+
+                    if (data.documents.length === 0) {
+                        documentList.innerHTML = '<p style="text-align: center; color: #999; padding: 20px;">暂无文档</p>';
+                        return;
+                    }
+
+                    data.documents.forEach(doc => {
+                        const item = document.createElement('div');
+                        item.className = 'document-item';
+                        item.innerHTML = `
+                            <span class="document-name">📄 ${doc.filename}</span>
+                            <button class="delete-btn" onclick="deleteDocument('${encodeURIComponent(doc.filename)}')">删除</button>
+                        `;
+                        documentList.appendChild(item);
+                    });
+                }
+            } catch (error) {
+                console.error('加载文档列表失败:', error);
+            }
+        }
+        async function de(filename){
+            if (!confirm(`确定要删除 ${decodeURIComponent(filename)} 吗？`)) return;
+              try {
+                const response = await fetch(`/a/${filename}`, {
+                    method: 'DELETE',
+                    headers: getAuthHeaders()
+                });
+
+                if (response.ok) {
+                    alert('删除成功');
+                    loa();
+                } else {
+                    const data = await response.json();
+                    alert(data.detail || '删除失败');
+                }
+            } catch {
+                alert('删除失败');
+            }
+           
+        }
+        
+        async function deleteDocument(filename) {
+            if (!confirm(`确定要删除 ${decodeURIComponent(filename)} 吗？`)) return;
+
+            try {
+                const response = await fetch(`/api/documents/${filename}`, {
+                    method: 'DELETE',
+                    headers: getAuthHeaders()
+                });
+
+                if (response.ok) {
+                    alert('删除成功');
+                    loadDocuments();
+                } else {
+                    const data = await response.json();
+                    alert(data.detail || '删除失败');
+                }
+            } catch {
+                alert('删除失败');
+            }
+        }
+        
+        async function loadChatHistory() {
+            try {
+                const response = await fetch('/history', {
+                    headers: getAuthHeaders()
+                });
+                
+                if (response.ok) {
+                    const messages = await response.json();
+                    chatMessages.innerHTML = '';
+                    
+                    if (messages.length === 0) {
+                        chatMessages.innerHTML = `
+                            <div class="welcome-message">
+                                <h3>您好！我是您的智能助手</h3>
+                                <p>我可以帮助您查询公司制度相关的问题，如年假政策、加班调休、出差报销等。</p>
+                                <p style="margin-top: 10px; color: #666; font-size: 13px;">输入问题开始问答，或输入"清空"清除对话历史</p>
+                            </div>
+                        `;
+                        return;
+                    }
+                    
+                    messages.forEach(msg => {
+                        addMessage(msg.role === 'user' ? 'user' : 'bot', msg.content);
+                    });
+                }
+            } catch (error) {
+                console.error('加载聊天历史失败:', error);
+            }
+        }
+        document.addEventListener('DOMContentLoaded', async () => {
+            await checkLogin();
+            await loadChatHistory();
+            
+            logoutBtn.addEventListener('click', () => {
+                localStorage.removeItem('token');
+                localStorage.removeItem('role');
+                window.location.href = '/static/login.html';
+            });
+
+            sendBtn.addEventListener('click', sendQuestion);
+
+            questionInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendQuestion();
+                }
+            });
+
+            clearBtn.addEventListener('click', clearHistory);
+        });
+    </script>
+</body>
+</html>

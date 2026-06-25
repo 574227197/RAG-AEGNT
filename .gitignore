@@ -1,0 +1,25 @@
+# Python 虚拟环境
+rag_env/
+venv/
+.env
+
+# 模型文件（太大了，不上传）
+models/
+
+# FAISS 索引文件
+faiss_index/
+
+# 数据库文件
+*.db
+
+# 日志文件
+*.log
+
+# IDE 配置
+.vscode/
+.idea/
+
+# 临时文件
+*.pyc
+__pycache__/
+*.tmp
