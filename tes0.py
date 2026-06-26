@@ -23,6 +23,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_classic.agents import create_tool_calling_agent, AgentExecutor
 from dotenv import load_dotenv
 import jieba
+from pydantic import BaseModel
 topk = 3
 load_dotenv()
 llm = ChatOpenAI(
@@ -217,6 +218,11 @@ for i, chunk in enumerate(doc_chunks):
     words = bm25_retriever.preprocess_func(chunk.page_content)
     print(f"分词结果：{words}")
 # ========== 混合检索函数（RRF排序）==========
+class RetrievalWeight(BaseModel):
+    fai: float
+    bm: float
+
+panduan = llm.with_structured_output(RetrievalWeight)
 def hybrid_retrieve(query, k=topk, rrf_k=60):
     wenben = f"""
         当前的提问:{query}.
@@ -233,12 +239,11 @@ def hybrid_retrieve(query, k=topk, rrf_k=60):
              用户用词和文档原文关键词高度重合、字面一致，需要精准命中条款原文；
             出现以上场景：提升 BM25 权重，降低 FAISS 向量权重
            
-           返回结果必须按照以下格式输出字典{{"fai":(数值)，"bm":(数值)}}
-           
         """
-    zidian = json.loads(llm.invoke(wenben).content)
-    fai = zidian["fai"]
-    bm = zidian["bm"]
+    jieuo = panduan.invoke(wenben)
+  
+    fai = jieuo.fai
+    bm = jieuo.bm
     print(f"faisis:{fai}")
     print(f"bm:{bm}")
     # BM25检索
@@ -304,7 +309,7 @@ def hybrid_retrieve(query, k=topk, rrf_k=60):
     
     return [item['doc'] for item in sorted_results[:k]]
 
-retriever = db.as_retriever(search_kwargs={"k": 2})
+retriever = db.as_retriever(search_kwargs={"k": 3})
 
 def retrieve_docs(query):
     """检索相关文档（混合索引）"""
