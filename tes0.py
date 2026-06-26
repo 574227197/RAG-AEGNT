@@ -15,14 +15,16 @@ from langchain_core.documents import Document as LangChainDocument             #
 from langchain_huggingface import HuggingFaceEmbeddings                        # HuggingFace 嵌入模型
 from langchain_community.vectorstores import FAISS                             # FAISS 向量数据库
 from langchain_community.retrievers import BM25Retriever                       # BM25 检索器
-from langchain_core.prompts import ChatPromptTemplate                          # 提示词模板
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder                       # 提示词模板
 from langchain_core.runnables import RunnablePassthrough                       # LCEL 透传组件
 from langchain_core.output_parsers import StrOutputParser                      # 输出解析器
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_classic.agents import create_tool_calling_agent, AgentExecutor
 from dotenv import load_dotenv
 import jieba
 topk = 3
 load_dotenv()
-jieba.add_word("年假")
 llm = ChatOpenAI(
     base_url="https://ark.cn-beijing.volces.com/api/v3",
     api_key=os.getenv("OPENAI_API_KEY"),
@@ -52,34 +54,20 @@ print("=" * 60)
 print(f"\n[*] 加载本地模型: {LOCAL_MODEL_PATH}")
 embeddings = HuggingFaceEmbeddings(model_name=LOCAL_MODEL_PATH)
 print("[OK] 本地 Embedding 模型加载成功！")
-
+@tool
 def get_weather(city: str) -> str:
     """
-    查询指定城市的天气情况（使用爬虫获取真实数据）
-
-    参数:
-        city: 城市名称，如"北京"
-
-    返回:
-        天气信息字符串
+    查询指定城市的天气情况。当用户问某城市天气、气温、下不下雨时使用。
     """
     try:
         ther = wea()
         return ther.suan(city)
     except Exception as e:
         return f"查询天气失败：{str(e)}"
-
+@tool
 def send_email(to_addr: str, subject: str, content: str) -> str:
     """
-    发送邮件
-    
-    参数:
-        to_addr: 收件人邮箱
-        subject: 邮件主题
-        content: 邮件内容
-    
-    返回:
-        发送结果
+发送邮件。当用户明确要求发邮件、把内容发到某个邮箱时使用。
     """
     try:
         msg = MIMEText(content, 'plain', 'utf-8')
@@ -95,17 +83,10 @@ def send_email(to_addr: str, subject: str, content: str) -> str:
         return f"邮件已成功发送到 {to_addr}"
     except Exception as e:
         return f"邮件发送失败: {str(e)}"
-
+@tool
 def save_report_to_desktop(content: str, filename: str = "问答总结报告.docx") -> str:
     """
-    将内容保存为 Word 文档到桌面
-    
-    参数:
-        content: 报告内容
-        filename: 文件名
-    
-    返回:
-        保存路径
+    把内容保存为 Word 文档到桌面。当用户要求保存、导出、整理成文档时使用。
     """
     try:
         # 获取桌面路径
@@ -120,35 +101,6 @@ def save_report_to_desktop(content: str, filename: str = "问答总结报告.doc
         return f"报告已保存到桌面：{filepath}"
     except Exception as e:
         return f"保存失败: {str(e)}"
-
-# 工具列表
-TOOLS = [
-    {
-        "name": "get_weather",
-        "description": "查询指定城市的天气情况",
-        "function": get_weather,
-        "params": [{"name": "city", "type": "string", "description": "城市名称"}]
-    },
-    {
-        "name": "send_email",
-        "description": "发送邮件给指定收件人",
-        "function": send_email,
-        "params": [
-            {"name": "to_addr", "type": "string", "description": "收件人邮箱"},
-            {"name": "subject", "type": "string", "description": "邮件主题"},
-            {"name": "content", "type": "string", "description": "邮件内容"}
-        ]
-    },
-    {
-        "name": "save_report_to_desktop",
-        "description": "将内容保存为Word文档到桌面",
-        "function": save_report_to_desktop,
-        "params": [
-            {"name": "content", "type": "string", "description": "报告内容"},
-            {"name": "filename", "type": "string", "description": "文件名（可选）"}
-        ]
-    }
-]
 
 print("✅ 工具系统初始化完成！")
 
@@ -371,173 +323,73 @@ def add_to_history(role, content):
     """添加消息到对话历史"""
     conversation_history.append({"role": role, "content": content})
 
-def get_history_text():
-    """获取格式化的对话历史"""
-    history_text = ""
-    for msg in conversation_history:
-        history_text += f"{msg['role']}: {msg['content']}\n"
-    return history_text
-
-def analyze_intent(question):
-    history_text = get_history_text()
-
-    # 先检索相关文档，让意图分析知道有哪些信息可用
-    retrieved_docs = retriever.invoke(question)
-    doc_content = "\n\n".join([doc.page_content for doc in retrieved_docs])
-    intent_prompt = f"""你是一个智能助手，需要分析用户的意图。
-
-以下是从知识库中检索到的相关文档内容：
-{doc_content}
-
-对话历史：
-{history_text}
-
-当前问题：{question}
-
-请分析：
-1. 用户的意图是什么？
-2. 是否需要追问用户获取更多信息？
-   - 如果用户问题太宽泛（如"我想了解出差政策"），需要追问具体想了解哪方面
-    - 用户表达"都行"、"都可以"、"随便"等意思时，理解为想了解所有相关信息，直接给出概览
-   - 如果用户问题具体，且文档中有明确答案，不需要追问，直接回答
-   - 如果用户问题涉及常识（如城市等级），且文档未明确说明，应使用常识判断，不要追问用户
-   - 只有在确实需要用户提供文档中也没有、常识也不知道的关键信息时，才追问
-3. 如果需要追问，问什么问题？（最多1个，简洁明了）
-4. 是否需要调用工具？
-5. 如果需要调用工具，调用哪个工具？以及需要什么参数？
-
-工具列表：
-1. get_weather - 查询城市天气，参数：city（城市名称）   调用关键词例如用户说“查看天气“，天气咋样”之类的 一次只传入一个城市的名字
-2. send_email - 发送邮件，参数：to_addr（收件人邮箱）、subject（主题）、content（内容） 调用关键词例如用户说”帮我把邮件发给XXX“ 参数中的 content 必须是完整的、可以直接使用的内容
-3. save_report_to_desktop - 保存文档到桌面，参数：content（内容）、filename（文件名，可选）调用关键词例如用户说“保存文件到桌面”，“整理文件保存”
-
-请按以下格式输出禁止画蛇添足：
-意图: [意图描述]
-追问: [若需要追问请写出问题或无]
-工具调用: [工具名称或无]
-参数: [字典或无]
-"""
-
-    result = llm.invoke(intent_prompt).content     #<-----------------------调用大模型
-    print(result)
-    return parse_intent_result(result)
-
-def parse_intent_result(result):
-
-    parsed = {
-        "intent": "",
-        "need_clarify": False,
-        "clarify_question": "",
-        "need_tool": False,
-        "tool_name": "",
-        "tool_params": {}
-    }
-    for line in result.split("\n"):
-        line = line.strip()
-        if line.startswith("意图:"):
-            parsed["intent"] = line.replace("意图:", "").strip()
-        elif line.startswith("追问:"):
-            content = line.replace("追问:", "").strip()
-            if content == "无":
-                parsed["need_clarify"] = False
-            elif content != "无":
-                parsed["need_clarify"] = True
-                parsed["clarify_question"] = content
-        elif line.startswith("工具调用:"):
-            content = line.replace("工具调用:", "").strip()
-            if content != "无":
-                parsed["need_tool"] = True
-                parsed["tool_name"] = content
-        elif line.startswith("参数:"):
-            content = line.replace("参数:", "").strip()
-            if content != "无":
-                cot = json.loads((content))
-                try:
-                    for key in cot:
-                       value = cot[key]
-
-                       parsed["tool_params"][key.strip()] = value.strip()
-                except:
-                    pass
-    return parsed
-
-def call_tool(tool_name, params):
-    """调用工具"""
-    for tool in TOOLS:
-        if tool["name"] == tool_name:
-            try:
-                result = tool["function"](**params)
-                return f"工具调用成功：{result}"
-            except Exception as e:
-                return f"工具调用失败：{tool_name},{params}"
-    return f"未找到工具：{tool_name}"
-
-
-template = """你是一个友好的公司助手。根据以下信息回答问题。
-
-检索到的文档：
-{context}
-
-对话历史：
-{history}
-
-用户问题：{question}
-
-回答规则：
-1. 如果用户只是打招呼（如"你好"、"嗨"、"您好"），请友好地回应，欢迎用户提问
-2. 如果文档中有相关信息，根据文档内容用自然、友好的语言回答
-3. 如果文档中没有相关信息，请友好地告知用户，并邀请用户提出其他问题
-
-回答要简洁明了，语气友好自然。
-"""
-
-prompt = ChatPromptTemplate.from_template(template)
-
 def format_docs(docs):
     """格式化检索到的文档"""
     return "\n\n".join([doc.page_content for doc in docs])
 
-def prepare_rag_input(input_data):
-    """准备 RAG 输入数据（使用混合索引）"""
-    # 使用混合检索获取文档
-    retrieved_docs = hybrid_retrieve(input_data["question"], k=2)
+@tool
+def search_company_policy(question: str) -> str:
+    """查询公司制度知识库。当用户问年假、调休、报销、出差、考勤、福利等公司政策时使用。"""
+    retrieved_docs = hybrid_retrieve(question, k=topk)
+    if not retrieved_docs:
+        return "未找到相关制度文档。"
+    return format_docs(retrieved_docs)
 
-    return {
-        "context": format_docs(retrieved_docs),
-        "question": input_data["question"],
-        "history": input_data["history"]
-    }
+agent_tools = [get_weather, send_email, save_report_to_desktop, search_company_policy]
 
-rag_chain = prepare_rag_input | prompt | llm | StrOutputParser()
+agent_prompt = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "你是公司智能助手。你可以：\n"
+        "- 使用 search_company_policy 查询公司制度（年假、报销、出差、考勤等）\n"
+        "- 使用 get_weather 查询天气\n"
+        "- 使用 send_email 发送邮件\n"
+        "- 使用 save_report_to_desktop 保存文档到桌面\n\n"
+        "规则：\n"
+        "1. 用户打招呼时直接友好回复，不要调用工具\n"
+        "2. 问公司制度时先调用 search_company_policy，再基于检索结果回答\n"
+        "3. 调用 send_email 时，content 必须是完整、可直接发送的正文\n"
+        "4. 可以连续调用多个工具完成用户请求\n"
+        "5. 回答简洁友好",
+    ),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}"),
+    MessagesPlaceholder("agent_scratchpad"),
+])
 
-print("✅ RAG 创建完成！")
+agent = create_tool_calling_agent(llm=llm, tools=agent_tools, prompt=agent_prompt)
+agent_executor = AgentExecutor(
+    agent=agent,
+    tools=agent_tools,
+    verbose=True,
+    max_iterations=8,
+    handle_parsing_errors=True,
+)
 
-def ask_question(question):
-    print("\n� 用户问题:", question)
+print("✅ Agent 创建完成！")
+
+def build_chat_history():
+    """将内存对话历史转为 LangChain Message 列表"""
+    messages = []
+    for msg in conversation_history:
+        if msg["role"] == "用户":
+            messages.append(HumanMessage(content=msg["content"]))
+        else:
+            messages.append(AIMessage(content=msg["content"]))
+    return messages
+
+def ask_question(question, chat_history=None):
+    print("\n用户问题:", question)
     print("-" * 50)
-    add_to_history("用户", question)
-    intent = analyze_intent(question)
-    print(f"📊 分析结果 - 意图: {intent['intent']}")
-    
-    # 如果需要追问
-    if intent["need_clarify"]:
-        clarify_question = intent["clarify_question"] if intent["clarify_question"] else "请补充更多信息"
-        print(f"❓ 需要追问: {clarify_question}")
-        add_to_history("助手", clarify_question)
-        return clarify_question
-    
-    # 如果需要调用工具
-    if intent["need_tool"]:
-        print(f"🛠️ 调用工具: {intent['tool_name']} ")
-        result = call_tool(intent["tool_name"], intent["tool_params"])
-        print(f"📝 工具结果: {result}")
-        add_to_history("助手", result)
-        return result
-    
-    # 否则使用 RAG 回答
-    history_text = get_history_text()
-    answer = rag_chain.invoke({"question": question, "history": history_text})#《-------------------调用大模型
-    add_to_history("助手", answer)
+    if chat_history is None:
+        chat_history = []
+
+    result = agent_executor.invoke({
+        "input": question,
+        "chat_history": chat_history,
+    })
+    answer = result["output"]
+    print(f"回答: {answer}")
     return answer
 
 print("\n" + "=" * 60)
@@ -548,20 +400,19 @@ print("=" * 60)
 
 
 class ai:
-  def yong(self,user_input):
+    def yong(self, user_input):
+        if user_input == "退出":
+            return "再见！"
 
-    
-    if user_input == "退出":
+        if user_input == "清空":
+            conversation_history.clear()
+            return "对话历史已清空！"
 
-        return("再见！")
-    
-    if user_input == "清空":
-        conversation_history.clear()
-
-        return ("对话历史已清空！")
-    
-    answer = ask_question(user_input)
-    return(answer)
+        chat_history = build_chat_history()
+        answer = ask_question(user_input, chat_history=chat_history)
+        add_to_history("用户", user_input)
+        add_to_history("助手", answer)
+        return answer
 
 class bd:
     def qie(self,pat):
